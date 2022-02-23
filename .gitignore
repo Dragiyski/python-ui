@@ -4,4 +4,4 @@
 # Samples (non-automated test code)
 sample/
 
-__py_cache__/
+__pycache__/
