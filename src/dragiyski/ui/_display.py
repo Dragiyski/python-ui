@@ -12,7 +12,7 @@ def count():
 
 def name(index: int):
     if not SDL_WasInit(SDL_INIT_VIDEO):
-        delegate_sync_call(SDL_InitSubSystem, SDL_VideoInit)
+        delegate_sync_call(SDL_InitSubSystem, SDL_INIT_VIDEO)
     count = SDL_GetNumVideoDisplays()
     if count < 0:
         raise UIError

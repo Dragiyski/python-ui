@@ -192,7 +192,7 @@ def delegate_sync_call(function, /, *args, **kwargs):
     # Block the current thread until the task is ready.
     delegate.wait()
     if delegate.has_exception():
-        raise delegate.exception()
+        raise delegate.exception()[1]
     return delegate.result()
 
 def delegate_async_call(loop, function, /, *args, **kwargs):
