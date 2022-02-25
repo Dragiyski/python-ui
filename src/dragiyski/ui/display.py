@@ -1,1 +1,1 @@
-from ._display import name, count
+from ._display import name, count, current_mode, mode_count, mode, modes, PixelFormat, DisplayMode
