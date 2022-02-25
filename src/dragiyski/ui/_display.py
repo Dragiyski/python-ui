@@ -1,5 +1,5 @@
 from sdl2 import *
-import sdl2
+import sdl2, ctypes
 from enum import Enum
 from ._error import UIError
 from ._event_thread import delegate_sync_call
@@ -9,6 +9,7 @@ from ._sdl import ensure_subsystem
 def count() -> int:
     if not SDL_WasInit(SDL_INIT_VIDEO):
         delegate_sync_call(SDL_InitSubSystem, SDL_INIT_VIDEO)
+    SDL_ClearError()
     count = SDL_GetNumVideoDisplays()
     if count < 0:
         raise UIError
@@ -27,6 +28,7 @@ def validate_display_index(display: int):
 def name(display: int) -> str:
     c = count()
     validate_display_index(display)
+    SDL_ClearError()
     buffer = SDL_GetDisplayName(display)
     if buffer is None:
         raise UIError
@@ -96,7 +98,16 @@ def create_display_mode(mode: SDL_DisplayMode):
 def current_mode(display: int) -> DisplayMode:
     validate_display_index(display)
     storage = SDL_DisplayMode()
+    SDL_ClearError()
     if SDL_GetCurrentDisplayMode(display, storage) < 0:
+        raise UIError
+    return create_display_mode(storage)
+
+def desktop_mode(display: int) -> DisplayMode:
+    validate_display_index(display)
+    storage = SDL_DisplayMode()
+    SDL_ClearError()
+    if SDL_GetDesktopDisplayMode(display, storage) < 0:
         raise UIError
     return create_display_mode(storage)
 
@@ -116,6 +127,7 @@ def mode(display: int, mode: int) -> DisplayMode:
     validate_display_index(display)
     validate_mode_index(display, mode)
     storage = SDL_DisplayMode()
+    SDL_ClearError()
     if SDL_GetDisplayMode(display, mode, storage) < 0:
         raise UIError
     return create_display_mode(storage)
@@ -124,4 +136,21 @@ def modes(display: int):
     validate_display_index(display)
     c = mode_count(display)
     return [mode(display=display, mode=x) for x in range(c)]
-        
+
+def closest_mode(display: int, mode: DisplayMode) -> DisplayMode:
+    validate_display_index(display)
+    storage = SDL_DisplayMode()
+    SDL_ClearError()
+    if SDL_GetClosestDisplayMode(display, mode, storage) is None:
+        raise UIError
+    return create_display_mode(storage)
+
+def dpi(display: int):
+    validate_display_index(display)
+    ddpi = ctypes.c_float()
+    hdpi = ctypes.c_float()
+    vdpi = ctypes.c_float()
+    SDL_ClearError()
+    if SDL_GetDisplayDPI(display, ddpi, hdpi, vdpi) < 0:
+        raise UIError
+    return (ddpi.value, hdpi.value, vdpi.value)
