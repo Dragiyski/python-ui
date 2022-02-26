@@ -4,6 +4,7 @@ from enum import Enum
 from ._error import UIError
 from ._event_thread import delegate_sync_call
 from ._sdl import ensure_subsystem
+from ._geometry import create_rectangle
 
 
 def count() -> int:
@@ -111,6 +112,14 @@ def desktop_mode(display: int) -> DisplayMode:
         raise UIError
     return create_display_mode(storage)
 
+def desktop_mode(display: int) -> DisplayMode:
+    validate_display_index(display)
+    storage = SDL_DisplayMode()
+    SDL_ClearError()
+    if SDL_GetDesktopDisplayMode(display, storage) < 0:
+        raise UIError
+    return create_display_mode(storage)
+
 def mode_count(display: int) -> int:
     validate_display_index(display)
     count = SDL_GetNumDisplayModes(display)
@@ -154,3 +163,19 @@ def dpi(display: int):
     if SDL_GetDisplayDPI(display, ddpi, hdpi, vdpi) < 0:
         raise UIError
     return (ddpi.value, hdpi.value, vdpi.value)
+
+def bounds(display: int):
+    validate_display_index(display)
+    result = SDL_Rect()
+    SDL_ClearError()
+    if SDL_GetDisplayBounds(display, result) < 0:
+        raise UIError
+    return create_rectangle(result)
+
+def usable_bounds(display: int):
+    validate_display_index(display)
+    result = SDL_Rect()
+    SDL_ClearError()
+    if SDL_GetDisplayUsableBounds(display, result) < 0:
+        raise UIError
+    return create_rectangle(result)
