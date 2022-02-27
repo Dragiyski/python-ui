@@ -2,10 +2,12 @@ from sdl2 import *
 import sdl2, ctypes
 from enum import Enum
 from ._error import UIError
-from ._event_thread import delegate_sync_call
+from ._event_thread import delegate_sync_call, convert_event_name
 from ._sdl import ensure_subsystem
 from ._geometry import create_rectangle
+from ._event_emitter import EventEmitter
 
+_display_emitter = EventEmitter()
 
 def count() -> int:
     if not SDL_WasInit(SDL_INIT_VIDEO):
@@ -179,3 +181,11 @@ def usable_bounds(display: int):
     if SDL_GetDisplayUsableBounds(display, result) < 0:
         raise UIError
     return create_rectangle(result)
+
+add_event_listener = _display_emitter.add_event_listener
+remove_event_listener = _display_emitter.remove_event_listener
+_display_event_names = {id: name for (name, id) in [(convert_event_name(x.removeprefix('SDL_DISPLAYEVENT_')), getattr(sdl2.video, x)) for x in dir(sdl2.video) if x.startswith('SDL_DISPLAYEVENT_')]}
+
+def dispatch_event(event: SDL_Event):
+    assert event.type == SDL_DISPLAYEVENT
+    

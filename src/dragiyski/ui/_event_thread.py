@@ -3,6 +3,7 @@ import sys
 import atexit
 import asyncio
 import functools
+import re
 from threading import Thread, Event, current_thread
 from queue import Queue, Empty
 from ._error import UIError
@@ -10,7 +11,14 @@ from typing import Optional, Callable
 from traceback import print_exc
 
 _window_event_names = {id: name for (name, id) in [(x[len('SDL_WINDOWEVENT_'):].lower(), getattr(video, x)) for x in dir(video) if x.startswith('SDL_WINDOWEVENT_')]}
+_re_word_to_under = re.compile('(.)([A-Z][a-z]+)')
+_re_upper_follow = re.compile('([a-z0-9])([A-Z])')
+_re_replacement = r'\1_\2'
 
+def convert_event_name(name: str):
+    name = re.sub(_re_word_to_under, _re_replacement, name)
+    name = re.sub(_re_upper_follow, _re_replacement, name)
+    return name.lower()
 
 def _event_thread_function():
     global _event_thread_ready, _event_thread_function, _event_thread_exception, _sdl_command_event
@@ -40,7 +48,11 @@ def _event_thread_function():
             if event.type == SDL_QUIT:
                 SDL_Quit()
                 break
-            _comsume_event(event)
+            if event.type == SDL_DISPLAYEVENT:
+                from ._display import dispatch_event
+                dispatch_event(event)
+                continue
+            # _comsume_event(event)
             if event.type in [SDL_DROPFILE, SDL_DROPTEXT]:
                 SDL_free(next(x for x in event.drop._fields_ if x[0] == 'file')[1].from_buffer(event.drop, event.drop.__class__.file.offset))
     except:
