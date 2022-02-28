@@ -216,25 +216,24 @@ def delegate_async_call(loop, function, /, *args, **kwargs):
         loop = asyncio.get_running_loop()
     return loop.run_in_executor(None, functools.partial(delegate_sync_call, function, *args, **kwargs))
 
-def get_delegate_from_args(kwargs):
-    if kwargs.get('sync') is True:
-        if kwargs.get('async') is True:
-            raise ValueError('Function cannot be both "sync" and "async" at the same time')
-        return delegate_sync_call
-    loop = kwargs.get('loop')
-    if loop is None:
+def get_delegate_from_args(async_loop=None):
+    if async_loop is True:
         try:
             loop = asyncio.get_running_loop()
         except RuntimeError:
-            pass
-    if kwargs.get('async') is True:
-        if loop is None:
-            loop = asyncio.get_event_loop()
-        return functools.partial(delegate_async_call, loop)
+            loop = asyncio.new_event_loop()
+    elif async_loop is False:
+        loop = None
+    elif async_loop is None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+    else:
+        loop = async_loop
     if loop is None:
         return delegate_sync_call
-    else:
-        return functools.partial(delegate_async_call, loop)
+    return functools.partial(delegate_async_call, loop)
 
 
 @atexit.register

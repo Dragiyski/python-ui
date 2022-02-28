@@ -1,13 +1,14 @@
 from sdl2 import *
 import sdl2, ctypes
+from datetime import datetime
 from enum import Enum
 from ._error import UIError
 from ._event_thread import delegate_sync_call, convert_event_name
 from ._sdl import ensure_subsystem
 from ._geometry import create_rectangle
-from ._event_emitter import EventEmitter
+from ._event_emitter import EventEmitter, _global
 
-_display_emitter = EventEmitter()
+_display_emitter = EventEmitter(parent=_global)
 
 def count() -> int:
     if not SDL_WasInit(SDL_INIT_VIDEO):
@@ -188,4 +189,24 @@ _display_event_names = {id: name for (name, id) in [(convert_event_name(x.remove
 
 def dispatch_event(event: SDL_Event):
     assert event.type == SDL_DISPLAYEVENT
-    
+    kwargs = {
+        'timestamp': datetime.fromtimestamp(event.display.timestamp),
+        'display': event.display.display
+    }
+    name = f'display.{_display_event_names[event.display.event]}'
+    # This event is only applicable for mobile (currently android only) implementation
+    # PySDL2 does not define SDL_DisplayOrientation
+    # SDL2 SDL_DisplayOrientation are defined as "portrait", "landscape" and flipped version of those.
+    # However, the above is only true for phones (currently). "portrait" is mapped to ROTATION_0 and landscape - to ROTATION_90,
+    # but in tablets, ROTATION_0 could be the landscape mode. Therefore, we unmap those back to their original values.
+    # Better way to distiguish between landscape and portrait is to get the current display mode and comapre width to height.
+    if event.display.event == SDL_DISPLAYEVENT_ORIENTATION:
+        if event.display.data1 == 1:
+            kwargs['orientation'] = 90
+        elif event.display.data1 == 2:
+            kwargs['orientation'] = 270
+        elif event.display.data1 == 3:
+            kwargs['orientation'] = 0
+        elif event.display.data1 == 4:
+            kwargs['orientation'] = 180
+    _display_emitter.emit_event(name, **kwargs)

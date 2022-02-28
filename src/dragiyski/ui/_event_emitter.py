@@ -6,7 +6,7 @@ _executor = ThreadPoolExecutor(thread_name_prefix='dragiyski.ui.event:')
 
 
 class EventEmitter:
-    def __init__(self, parent: Optional[EventEmitter] = None):
+    def __init__(self, parent: 'Optional[EventEmitter]' = None):
         self.__listeners = {}
         self.__parent = parent
 
@@ -57,3 +57,9 @@ class EventEmitter:
         futures = [_executor.submit(self._execute, listener, name, args, kwargs) for listener in self.__listeners]
         if name != 'exception':
             _executor.submit(self._exception_check, name, futures, args, kwargs)
+        if self.__parent is not None:
+            self.__parent.emit_event(name, *args, **kwargs)
+
+_global = EventEmitter()
+add_event_listener = _global.add_event_listener
+remove_event_listener = _global.remove_event_listener
