@@ -1,18 +1,14 @@
 from sdl2 import *
 import sdl2, ctypes
-from datetime import datetime
 from enum import Enum
 from ._error import UIError
-from ._event_thread import delegate_sync_call, convert_event_name
-from ._sdl import ensure_subsystem
 from ._geometry import create_rectangle
-from ._event_emitter import EventEmitter, _global
+from ._thread import in_event_thread
 
-_display_emitter = EventEmitter(parent=_global)
-
+@in_event_thread
 def count() -> int:
     if not SDL_WasInit(SDL_INIT_VIDEO):
-        delegate_sync_call(SDL_InitSubSystem, SDL_INIT_VIDEO)
+        SDL_InitSubSystem(SDL_INIT_VIDEO)
     SDL_ClearError()
     count = SDL_GetNumVideoDisplays()
     if count < 0:
@@ -29,6 +25,7 @@ def validate_display_index(display: int):
     raise IndexError('param `display` out of range')
 
 
+@in_event_thread
 def name(display: int) -> str:
     c = count()
     validate_display_index(display)
@@ -99,6 +96,7 @@ def create_display_mode(mode: SDL_DisplayMode):
     return wrapper
 
 
+@in_event_thread
 def current_mode(display: int) -> DisplayMode:
     validate_display_index(display)
     storage = SDL_DisplayMode()
@@ -107,6 +105,7 @@ def current_mode(display: int) -> DisplayMode:
         raise UIError
     return create_display_mode(storage)
 
+@in_event_thread
 def desktop_mode(display: int) -> DisplayMode:
     validate_display_index(display)
     storage = SDL_DisplayMode()
@@ -115,14 +114,7 @@ def desktop_mode(display: int) -> DisplayMode:
         raise UIError
     return create_display_mode(storage)
 
-def desktop_mode(display: int) -> DisplayMode:
-    validate_display_index(display)
-    storage = SDL_DisplayMode()
-    SDL_ClearError()
-    if SDL_GetDesktopDisplayMode(display, storage) < 0:
-        raise UIError
-    return create_display_mode(storage)
-
+@in_event_thread
 def mode_count(display: int) -> int:
     validate_display_index(display)
     count = SDL_GetNumDisplayModes(display)
@@ -135,6 +127,7 @@ def validate_mode_index(display: int, mode: int):
     if mode < 0 or mode >= c:
         raise IndexError('param `mode` out of range: [0, {c}]')
 
+@in_event_thread
 def mode(display: int, mode: int) -> DisplayMode:
     validate_display_index(display)
     validate_mode_index(display, mode)
@@ -144,11 +137,13 @@ def mode(display: int, mode: int) -> DisplayMode:
         raise UIError
     return create_display_mode(storage)
 
+@in_event_thread
 def modes(display: int):
     validate_display_index(display)
     c = mode_count(display)
     return [mode(display=display, mode=x) for x in range(c)]
 
+@in_event_thread
 def closest_mode(display: int, mode: DisplayMode) -> DisplayMode:
     validate_display_index(display)
     storage = SDL_DisplayMode()
@@ -157,6 +152,7 @@ def closest_mode(display: int, mode: DisplayMode) -> DisplayMode:
         raise UIError
     return create_display_mode(storage)
 
+@in_event_thread
 def dpi(display: int):
     validate_display_index(display)
     ddpi = ctypes.c_float()
@@ -167,6 +163,7 @@ def dpi(display: int):
         raise UIError
     return (ddpi.value, hdpi.value, vdpi.value)
 
+@in_event_thread
 def bounds(display: int):
     validate_display_index(display)
     result = SDL_Rect()
@@ -175,6 +172,7 @@ def bounds(display: int):
         raise UIError
     return create_rectangle(result)
 
+@in_event_thread
 def usable_bounds(display: int):
     validate_display_index(display)
     result = SDL_Rect()
@@ -182,31 +180,3 @@ def usable_bounds(display: int):
     if SDL_GetDisplayUsableBounds(display, result) < 0:
         raise UIError
     return create_rectangle(result)
-
-add_event_listener = _display_emitter.add_event_listener
-remove_event_listener = _display_emitter.remove_event_listener
-_display_event_names = {id: name for (name, id) in [(convert_event_name(x.removeprefix('SDL_DISPLAYEVENT_')), getattr(sdl2.video, x)) for x in dir(sdl2.video) if x.startswith('SDL_DISPLAYEVENT_')]}
-
-def dispatch_event(event: SDL_Event):
-    assert event.type == SDL_DISPLAYEVENT
-    kwargs = {
-        'timestamp': datetime.fromtimestamp(event.display.timestamp),
-        'display': event.display.display
-    }
-    name = f'display.{_display_event_names[event.display.event]}'
-    # This event is only applicable for mobile (currently android only) implementation
-    # PySDL2 does not define SDL_DisplayOrientation
-    # SDL2 SDL_DisplayOrientation are defined as "portrait", "landscape" and flipped version of those.
-    # However, the above is only true for phones (currently). "portrait" is mapped to ROTATION_0 and landscape - to ROTATION_90,
-    # but in tablets, ROTATION_0 could be the landscape mode. Therefore, we unmap those back to their original values.
-    # Better way to distiguish between landscape and portrait is to get the current display mode and comapre width to height.
-    if event.display.event == SDL_DISPLAYEVENT_ORIENTATION:
-        if event.display.data1 == 1:
-            kwargs['orientation'] = 90
-        elif event.display.data1 == 2:
-            kwargs['orientation'] = 270
-        elif event.display.data1 == 3:
-            kwargs['orientation'] = 0
-        elif event.display.data1 == 4:
-            kwargs['orientation'] = 180
-    _display_emitter.emit_event(name, **kwargs)

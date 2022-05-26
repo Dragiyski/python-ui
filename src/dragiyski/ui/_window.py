@@ -1,69 +1,11 @@
 from sdl2 import *
+from enum import Enum
 from ._geometry import Rectangle
 from ._error import UIError
+from ._thread import window_map, window_map_lock, event_thread, in_event_thread
 from . import display
 from typing import Optional, Union
-from ._event_thread import _event_thread, get_delegate_from_args
-from threading import current_thread, RLock, Event, Thread
-
-_window_map = {}
-_window_map_lock = RLock()
-_window_thread = None
-_window_thread_event = Event()
-
-
-def _window_thread_function():
-    while len(_window_map) > 0:
-        _window_thread_event.clear()
-        _window_thread_event.wait()
-
-
-def _on_window_added():
-    global _window_thread
-    if _window_thread is None or not _window_thread.is_alive():
-        _window_thread = Thread(target=_window_thread_function, daemon=False, name='UI Window Lifeline Thread')
-        _window_thread.start()
-
-
-def _on_window_removed():
-    _window_thread_event.set()
-
-
-class WindowPosition:
-    def __init__(self, /, x: int, y: int, width: Optional[int] = None, height: Optiona[int] = None, display: Optional[int] = 0):
-        self._args = [x, y, w, h]
-        self._display = display
-
-    @classmethod
-    def from_rectangle(cls, position: Rectangle):
-        return cls(position.x, position.y, position.width, position.height)
-
-    @classmethod
-    def centered(cls, width: Optional[int] = None, height: Optional[int] = None):
-        return cls(SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height)
-
-    @classmethod
-    def centered_at(cls, display: int, width: Optional[int] = None, height: Optional[int] = None):
-        return cls(SDL_WINDOWPOS_CENTERED_DISPLAY(display), SDL_WINDOWPOS_CENTERED_DISPLAY(display), width, height, display)
-
-    @classmethod
-    def undefined(cls, width: Optional[int] = None, height: Optional[int] = None):
-        return cls(SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height)
-
-    @classmethod
-    def centered_at(cls, display: int, width: Optional[int] = None, height: Optional[int] = None):
-        return cls(SDL_WINDOWPOS_UNDEFINED_DISPLAY(display), SDL_WINDOWPOS_UNDEFINED_DISPLAY(display), width, height, display)
-
-
-def get_arguments_from_position(position: WindowPosition):
-    args = position._args
-    if args[2] is None or args[3] is None:
-        bounds = display.usable_bounds(position._display)
-        if args[2] is None:
-            args[2] = bounds.width // 2
-        if args[3] is None:
-            args[3] = bounds.height // 2
-    return args
+import threading
 
 
 class WindowDatabase(type):
@@ -72,39 +14,59 @@ class WindowDatabase(type):
     """
 
     def __call__(self, id: int):
-        if _event_thread is None or not _event_thread.is_alive() or current_thread() is not _event_thread:
+        if not event_thread.is_alive() or threading.current_thread() is not event_thread:
             raise RuntimeError('Window() cannot only be called from the UIEvent thread. Use Window.create() instead.')
-        with _window_map_lock:
-            if id in _window_map:
-                return _window_map[id]
-            raise Window.NotFound('The window with ID [{id}] does not exists or not created with dragiyski.ui.')
+        with window_map_lock:
+            if id in window_map:
+                return window_map[id]
+            raise Window.NotFound('The window with ID [{id}] does not exists or not created with dragiyski.ui module.')
 
 
 class Window(metaclass=WindowDatabase):
+    class Position:
+        def __init__(self, /, x: int, y: int, width: Optional[int] = None, height: Optional[int] = None, display: Optional[int] = 0):
+            self._args = [x, y, width, height]
+            self._display = display
+
+        @classmethod
+        def from_rectangle(cls, position: Rectangle):
+            return cls(position.x, position.y, position.width, position.height)
+
+        @classmethod
+        def centered(cls, width: Optional[int] = None, height: Optional[int] = None):
+            return cls(SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height)
+
+        @classmethod
+        def centered_at(cls, display: int, width: Optional[int] = None, height: Optional[int] = None):
+            return cls(SDL_WINDOWPOS_CENTERED_DISPLAY(display), SDL_WINDOWPOS_CENTERED_DISPLAY(display), width, height, display)
+
+        @classmethod
+        def undefined(cls, width: Optional[int] = None, height: Optional[int] = None):
+            return cls(SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED, width, height)
+
+        @classmethod
+        def centered_at(cls, display: int, width: Optional[int] = None, height: Optional[int] = None):
+            return cls(SDL_WINDOWPOS_UNDEFINED_DISPLAY(display), SDL_WINDOWPOS_UNDEFINED_DISPLAY(display), width, height, display)
+
     class NotFound(UIError):
         pass
 
-    class FullScreen(Enum):
+    class Mode(Enum):
         WINDOW = 0
         DESKTOP = 1
-        REAL = 2
-
-    def __init__(self, id: int, sdl_window: SDL_CreateWindow.restype):
-        super().__init__()
-        self.__id = id
-        self._as_parameter_ = self.__window = sdl_window
+        FULLSCREEN = 2
 
     @classmethod
     def create(
         cls,
         *,
         title: Union[str, bytes] = "",
-        position: WindowPosition = WindowPosition.undefined(),
+        position: Position = Position.undefined(),
         visible: bool = True,
         resizable: bool = True,
         minimized: bool = False,
         maximized: bool = False,
-        fullscreen: FullScreen = FullScreen.WINDOWED,
+        window_mode: Mode = Mode.WINDOW,
         **kwargs
     ):
         """Creates a window.
@@ -122,23 +84,23 @@ class Window(metaclass=WindowDatabase):
             title = title.encode('utf-8')
         sdl_args = [title, *get_arguments_from_position(position), 0]
         if visible:
-            args[5] |= SDL_WINDOW_SHOWN
+            sdl_args[5] |= SDL_WINDOW_SHOWN
         else:
-            args[5] |= SDL_WINDOW_HIDDEN
+            sdl_args[5] |= SDL_WINDOW_HIDDEN
         if resizable:
-            args[5] |= SDL_WINDOW_RESIZABLE
+            sdl_args[5] |= SDL_WINDOW_RESIZABLE
         if minimized:
-            args[5] |= SDL_WINDOW_MINIMIZED
+            sdl_args[5] |= SDL_WINDOW_MINIMIZED
         if maximized:
-            args[5] |= SDL_WINDOW_MAXIMIZED
-        if fullscreen == Window.FullScreen.DESKTOP:
-            args[5] |= SDL_WINDOW_FULLSCREEN_DESKTOP
-        elif fullscreen == Window.FullScreen.REAL:
-            args[5] |= SDL_WINDOW_FULLSCREEN
-        delegate = get_delegate_from_args(kwargs)
-        return delegate(cls._create, sdl_args)
+            sdl_args[5] |= SDL_WINDOW_MAXIMIZED
+        if window_mode == Window.Mode.DESKTOP:
+            sdl_args[5] |= SDL_WINDOW_FULLSCREEN_DESKTOP
+        elif window_mode == Window.Mode.FULLSCREEN:
+            sdl_args[5] |= SDL_WINDOW_FULLSCREEN
+        cls._create(sdl_args)
 
     @classmethod
+    @in_event_thread
     def _create(cls, sdl_args):
         SDL_ClearError()
         sdl_window = SDL_CreateWindow(*sdl_args)
@@ -154,9 +116,37 @@ class Window(metaclass=WindowDatabase):
             message = SDL_GetError().decode('utf-8')
             SDL_DestroyWindow(sdl_window)
             raise UIError(message)
-        with _window_map_lock:
+        return cls._from_sdl_window(cls, sdl_window, window_id)
+
+    def _from_sdl_window(cls, sdl_window, window_id):
+        with window_map_lock:
             self = super().__new__(cls)
-            self.__init__(window_id, sdl_window)
-            _window_map[id] = self
-        _on_window_added()
+            self.__window = sdl_window
+            self.__id = window_id
+            self.__event_listener_lock = threading.RLock()
+            self.__event_listener_by_type = dict()
+            window_map[window_id] = self
         return self
+
+    @in_event_thread
+    def destroy(self):
+        if self.__id is None:
+            return
+        SDL_DestroyWindow(self.__window)
+        self.__id = None
+        with self.__event_listener_lock:
+            for type_map in self.__event_listener_by_type.values():
+                for listener in type_map.values():
+                    listener.remove()
+
+
+
+def get_arguments_from_position(position: Window.Position):
+    args = position._args
+    if args[2] is None or args[3] is None:
+        bounds = display.usable_bounds(position._display)
+        if args[2] is None:
+            args[2] = bounds.width // 2
+        if args[3] is None:
+            args[3] = bounds.height // 2
+    return args
