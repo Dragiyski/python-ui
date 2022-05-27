@@ -1,8 +1,10 @@
-from ._thread import event_decorator_factory
+from typing import Callable
+from ._thread import event_listeners, event_listener_lock
 from ._window import Window
 from sdl2 import *
 import sdl2
 
+event_listener_by_type = dict()
 map_sdl_window_events = dict((getattr(sdl2, x), 'window_' + x.removeprefix('SDL_WINDOWEVENT_').lower()) for x in dir(sdl2) if x.startswith('SDL_WINDOWEVENT_'))
 
 
@@ -47,7 +49,10 @@ class WindowSizeEvent(WindowEvent):
 def create_event(sdl_event: SDL_Event):
     type = None
     Class = None
-    args = {}
+    args = {
+        'timestamp': event.common.timestamp,
+        'type': type
+    }
     if sdl_event.type == SDL_DISPLAYEVENT:
         Class = DisplayEvent
         args['display'] = sdl_event.display.display
@@ -76,5 +81,83 @@ def create_event(sdl_event: SDL_Event):
             Class = WindowPositionEvent
             args['x'] = event.window.data1
             args['y'] = event.window.data2
+    if type is not None and Class is not None:
+        return Class(**args)
 
-        
+
+def dispatch_event(name: str, event: Event):
+    pass
+
+
+class EventListenerType(type):
+    """
+    Used with event_listener_by_type to ensure a listener to the same type+function produce the same object.
+    As a result, adding an event listener twice with the same type+function would not result in double-call.
+    """
+    def __call__(cls, event_type: str, function: Callable):
+        if event_type not in event_listener_by_type:
+            type_map = event_listener_by_type[event_type] = dict()
+        if function in type_map:
+            if cls is EventListenerOnce or not isinstance(type_map[function], EventListenerOnce):
+                return type_map[function]
+            # Current state is EventListenerOnce while the request is for EventListener
+            # In this case the function is promoted to EventListener class, replacing EventListenerOnce
+        self = super(EventListenerType, cls).__call__(event_type, function)
+        type_map[function] = self
+        return self
+
+
+class EventListener(metaclass=EventListenerType):
+    def __init__(self, event_type: str, function: Callable):
+        # We intentionally do not add self to listeners, this will be done by the decorators.
+        # The user can retrieve the listener by calling EventListener("type", func),
+        # and since this is light-weight object, it doubles as dummy EventListener.
+        self.__event_type = event_type
+        self.__function = function
+
+    def __call__(self, *args, **kwargs):
+        return self.__function(*args, **kwargs)
+
+    @property
+    def type() -> str:
+        return self.__event_type
+
+    @property
+    def function() -> Callable:
+        return self.__function
+
+    def remove():
+        with event_listener_lock:
+            if self.__event_type in event_listener_by_type:
+                type_map = event_listener_by_type[self.__event_type]
+                if self.__function in type_map:
+                    del self.__function[type_map]
+                    if len(type_map) <= 0:
+                        del event_listener_by_type[self.__event_type]
+            event_listeners.remove(self)
+
+
+class EventListenerOnce(EventListener):
+    def __call__(self, *args, **kwargs):
+        self.remove()
+        return super().__call__(*args, **kwargs)
+
+
+def event_decorator_factory(event_type: str):
+    def event_decorator_optional_arguments(*args, once=False, **kwargs):
+        def event_decorator(function: Callable):
+            with event_listener_lock:
+                listener = Class(event_type, function)
+                event_listeners.add(listener)
+            return function
+        if len(kwargs) == 0 and len(args) == 1 and callable(args[0]):
+            return event_decorator(args[0])
+        return event_decorator
+
+
+def on_display_connected(*args, **kwargs):
+    return event_decorator_factory('display_connected')(*args, **kwargs)
+
+
+def on_display_disconnected(*args, **kwargs):
+    return event_decorator_factory('display_disconnected')(*args, **kwargs)

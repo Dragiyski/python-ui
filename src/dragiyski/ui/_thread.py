@@ -7,7 +7,6 @@ import threading
 import re
 
 event_listeners = set()
-event_listener_by_type = dict()
 event_listener_lock = threading.RLock()
 window_map = dict()
 window_map_lock = threading.RLock()
@@ -90,38 +89,24 @@ class EventThread(threading.Thread):
         if command_event == 0xFFFFFFFF:
             raise UIError
         while self.__stage == 2:
-            event = SDL_Event()
+            sdl_event = SDL_Event()
             if SDL_WaitEvent(event) <= 0:
                 raise UIError
-            if event.type == command_event:
+            if sdl_event.type == command_event:
                 self.drain_queue()
-            elif event.type == SDL_QUIT:
+            elif sdl_event.type == SDL_QUIT:
                 break
-            elif event.type == SDL_DISPLAYEVENT:
-                if event.display.event == SDL_DISPLAYEVENT_CONNECTED:
-                    from ._event import DisplayEvent
-                    dispatch_event('display_connected', DisplayEvent(display=event.display.display, type=event.type, timestamp=event.timestamp))
-                elif event.display.event == SDL_DISPLAYEVENT_DISCONNECTED:
-                    from ._event import DisplayOrientationEvent
-                    dispatch_event('display_disconnected', DisplayOrientationEvent(data1=event.display.data1, display=event.display.display, type=event.type, timestamp=event.timestamp))
-            elif event.type == SDL_WINDOWEVENT:
-                from ._window import Window
-                try:
-                    window = Window(event.window.windowID)
-                except Window.NotFound:
-                    continue
-                if event.window.event in [SDL_WINDOWEVENT_RESIZED, SDL_WINDOWEVENT_SIZE_CHANGED]:
-                    from ._event import WindowSizeEvent
-                    dispatch_event(map_sdl_window_events[event.window.event], WindowSizeEvent(width=event.window.data1, height=event.window.data2, window=window, type=event.type, timestamp=event.timestamp))
-                elif event.window.event == SDL_WINDOWEVENT_MOVED:
-                    from ._event import WindowPositionEvent
-                    dispatch_event(map_sdl_window_events[event.window.event], WindowPositionEvent(x=event.window.data1, y=event.window.data2, window=window, type=event.type, timestamp=event.timestamp))
-                elif event.window.event == SDL_WINDOWEVENT_DISPLAY_CHANGED:
-                    dispatch_event(map_sdl_window_events[event.window.event], window, event.window.data1)
-                else:
-                    dispatch_event(map_sdl_window_events[event.window.event], window)
-            if event.type in [SDL_DROPFILE, SDL_DROPTEXT]:
-                SDL_free(next(x for x in event.drop._fields_ if x[0] == 'file')[1].from_buffer(event.drop, event.drop.__class__.file.offset))
+            else:
+                from ._event import create_event
+                event = create_event(sdl_event)
+                if event is not None:
+                    from ._event import dispatch_event
+                    dispatch_event(event.type, event)
+            # According to documentation, libSDL uses strdup, which allocate necessary memory to store a string. It is responsibility
+            # of the caller for the SDL_*Event functions to release that memory.
+            # Since create_event() must decode such strings, which generate a python copy of it, the original is safe to discard.
+            if sdl_event.type in [SDL_DROPFILE, SDL_DROPTEXT]:
+                SDL_free(next(x for x in sdl_event.drop._fields_ if x[0] == 'file')[1].from_buffer(sdl_event.drop, sdl_event.drop.__class__.file.offset))
         with window_map_lock:
             for window in window_map.values():
                 window.destroy()
@@ -186,6 +171,7 @@ def wait_for_atexit():
         while True:
             strong_threads = [x for x in threading.enumerate() if x.is_alive() and x.daemon is False and x not in ui_threads]
             if len(strong_threads) > 0:
+                # Since all "strong" threads must exit before the ui_threads, it does not matter at which strong thread we are waiting;
                 strong_threads[0].join()
             else:
                 break
@@ -209,64 +195,3 @@ def in_event_thread(function):
         caller.__qualname__ = function.__qualname__
     return caller
 
-class EventListenerType(type):
-    def __call__(cls, event_type: str, function: Callable):
-        if event_type in event_listener_by_type:
-            type_map = event_listener_by_type[event_type]
-            if function in type_map:
-                return type_map[function]
-        return super(EventListenerType, cls).__call__(event_type, function)
-
-class EventListener(metaclass=EventListenerType):
-    def __init__(self, event_type: str, function: Callable):
-        # We intentionally do not add self to listeners, this will be done by the decorators.
-        # The user can retrieve the listener by calling EventListener("type", func),
-        # and since this is light-weight object, it doubles as dummy EventListener.
-        self.__event_type = event_type
-        self.__function = function
-    
-    def __call__(self, *args, **kwargs):
-        return self.__function(*args, **kwargs)
-
-    @property
-    def type() -> str:
-        return self.__event_type
-
-    @property
-    def function() -> Callable:
-        return self.__function
-
-    def remove():
-        with event_listener_lock:
-            if self.__event_type in event_listener_by_type:
-                type_map = event_listener_by_type[self.__event_type]
-                if self.__function in type_map:
-                    del self.__function[type_map]
-                    if len(type_map) <= 0:
-                        del event_listener_by_type[self.__event_type]
-            event_listeners.remove(self)
-
-class EventListenerOnce(EventListener):
-    def __call__(self, *args, **kwargs):
-        self.remove()
-        return super().__call__(*args, **kwargs)
-
-def event_decorator_factory(event_type: str):
-    def event_decorator_optional_arguments(*args, once=False, **kwargs):
-        def event_decorator(function: Callable):
-            with event_listener_lock:
-                if event_type not in event_listener_by_type:
-                    event_listener_by_type[event_type] = dict()
-                type_map = event_listener_by_type[event_type]
-                if function not in type_map:
-                    Class = EventListenerOnce if once is True else EventListener
-                    listener = Class(event_type, function)
-                    type_map[function] = listener
-                    event_listeners.add(listener)
-            return function
-        if len(kwargs) == 0 and len(args) == 1 and callable(args[0]):
-            return event_decorator(args[0])
-        return event_decorator
-
-def event_dispatch(name, /, *args, **kwargs):
-    pass
