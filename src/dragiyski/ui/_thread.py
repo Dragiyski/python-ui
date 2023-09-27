@@ -2,6 +2,7 @@ from sdl2 import *
 import sdl2
 from queue import Queue, Empty
 from typing import Callable
+from ._error import UIError
 import sys
 import threading
 import re
@@ -85,12 +86,15 @@ class EventThread(threading.Thread):
         if len(event_listeners) + len(window_map) <= 0:
             return
         self.__stage = 2
+        if not SDL_WasInit(SDL_INIT_EVENTS):
+            if SDL_InitSubSystem(SDL_INIT_EVENTS) < 0:
+                raise UIError
         self.__command_event = command_event = SDL_RegisterEvents(1)
         if command_event == 0xFFFFFFFF:
             raise UIError
         while self.__stage == 2:
             sdl_event = SDL_Event()
-            if SDL_WaitEvent(event) <= 0:
+            if SDL_WaitEvent(sdl_event) <= 0:
                 raise UIError
             if sdl_event.type == command_event:
                 self.drain_queue()
@@ -176,13 +180,14 @@ def wait_for_atexit():
             else:
                 break
     finally:
-        run_in_event_thread(event_thread.terminate_stage1)
+        if event_thread.is_alive():
+            run_in_event_thread(event_thread.terminate_stage1)
     # TODO: Do the stage-2 here. If there is windows, keep this thread.
     # TODO: Because there is no way to forcefully kill threads, the UIEvent thread might transition to stage2 while
     # TODO: this thread wait for the main thread to exit. In such case, starting another waiting thread is not necessary.
 
 
-alive_thread_stage1 = threading.Thread(target=wait_for_atexit, name='dragiyski.ui.alive')
+alive_thread_stage1 = threading.Thread(target=wait_for_atexit, name='dragiyski.ui.alive', daemon=False)
 ui_threads.add(alive_thread_stage1)
 
 run_in_event_thread = event_thread.execute
@@ -195,3 +200,9 @@ def in_event_thread(function):
         caller.__qualname__ = function.__qualname__
     return caller
 
+def add_event_listener(listener):
+    event_listeners.add(listener)
+    if event_thread.is_alive():
+        run_in_event_thread(event_thread.terminate_stage1)
+    else:
+        event_thread.start()

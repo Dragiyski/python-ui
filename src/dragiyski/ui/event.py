@@ -1,1 +1,1 @@
-from ._event import on_display_connected, on_display_disconnected
+from ._event import ui_event, Event, WindowEvent, WindowPositionEvent, WindowSizeEvent, DisplayEvent, DisplayOrientationEvent

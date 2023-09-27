@@ -1,11 +1,11 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "e5aaa72f44ea22e10dbafa4923ba3f19c0a0bac7f4091827f168381d82029ee8"
+            "sha256": "76a0a2230ef473d97656099cd19a80bb8baf793081a442cb5f18b6cdcc9ada31"
         },
         "pipfile-spec": 6,
         "requires": {
-            "python_version": "3.9"
+            "python_version": "3.10"
         },
         "sources": [
             {
@@ -18,11 +18,10 @@
     "default": {
         "pysdl2": {
             "hashes": [
-                "sha256:93e51057d39fd583b80001d42b21d5a3f71e30d489d85924d944b2c7350e2da6",
-                "sha256:ff9878c3c64f26c384ba59360f784be7ec3ae5d5fbc7abae3c05a69a2ad6299b"
+                "sha256:24091f8d9e437646591c7f76d5baeee3d3aa6cd8ae492a51c7026e53389f187a"
             ],
             "index": "pypi",
-            "version": "==0.9.11"
+            "version": "==0.9.14"
         }
     },
     "develop": {}

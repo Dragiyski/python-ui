@@ -10,6 +10,71 @@ from ._error import UIError
 from typing import Optional, Callable
 from traceback import print_exc
 
+# TODO: The original idea is still viable: event listeners
+# Since each process can only have a single thread that initialize the libsdl2, we can create a decorator.
+# For example, if user defines a functio with decorator @display.connected or @window.close, the decorator can return the function
+# unchanged, but store a reference to the function for later.
+# Function signature can be enforced by the decorator. Or optionally, per-event-type defined properties to the decorator can be used to define signature.
+# For example:
+# @window.moved(window=0, x='left', y='top')
+# add @window.moved event listener, whose signature is (x, y, window, timestamp), but given *args, and **kwargs, window is passed to args[0], while x is passed to kwargs['left'] and y - to kwargs['top']
+# Signature change will only use the kwargs.
+
+# An event decorator might be global (supporting all events), or local to an object
+# main_window = Window(...)
+# @main_window.when_moved
+# def listener(window, x, y):
+#   ...
+#
+# will add an event listener for main_window only.
+
+# We can also remove Window Lifeline thread and make UIEventThread non-daemon, so it keeps the process running.
+
+# The process lifecycle:
+# In order to execute UI in python we need:
+# A daemon (misleading name, should be called "strong") thread to initialize the SDL library, called UIEvent thread, which would have two stages:
+# Stage 1: A stage prior to adding an event listener. If there are event listener already, this stage is skipped.
+# Stage 2: After an event listener has been added.
+# That thread must be the only thread to call SDL_InitSubsystem(). It must be strong thread (i.e. daemon) to prevent the process to exit.
+
+# To allow the process to exit, we create UILifetime "strong" (daemon) thread. This thread must be started upon entering stage 2 of the UIEvent thread.
+# This thread must be the last strong thread. To do this:
+# 1. Call threading.main_thread().join() if is_alive(). This will block it at least until the main thread exits.
+# 2. Call threading.enumerate() removing the current_thread, UIEvent thread, and all weak (non-daemon) threads. Repeat until empty list.
+# 3. If at this point, there are no windows in the window_map, send an SDL_QUIT event and exit the thread. The event will be restarted on window creation.
+# 4. If there is alive window, wait for notification from threading.Event that signify change of the active windows.
+
+# The lifetime flow:
+
+# # Scenario 1: The main module calls upon the dragiyski.ui requesting some data, like the number of displays, their resolution, etc.
+# 1. The UIEvent thread is created (required, since, if a user creates a window, the UIEvent must be the one called SDL_InitSubsystem)
+# 2. UIEvent is in stage 1, only the Queue is observed.
+# 3. When needed the main_thread() blocks waiting for the UIEvent thread to execute stuff.
+# 4. UIEvent does not have event listeners, does not enter stage 2 and exits.
+# 5. The main_thread() exits before or after the UIEvent thread.
+
+# # Scenario 2: Observation of input or other events, without windows.
+# 1. The UIEvent thread is created.
+# 2. Listeners probably already added (by decorators for example).
+# 3. Upon entering stage2, the UILifetime thread is created.
+# 4. main_thread() exits, or already left.
+# 5. No windows, so UILifetime thread exits sending SDL_QUIT.
+# 6. UIEvent exits, the process closes
+
+# Note: In this case, the main_thread may or may not exit, but there will be event listeners.
+# The event listener executes in their own separate thread (in a ThreadPoolExecutor, so threads are reused after that).
+# The event listeners are *not* hooks, they run in parallel. Their result is ignored, exception will result in an "exception" event. If there
+# are no listener for "exception" event, they will be silently ignored. Exceptions within an "exception" event will also be silently ignored.
+
+# # Scenario 3: Actual user interface
+# 1. The UIEvent thread is created.
+# 2. Since there are active windows, even if there are no listeners, UIEvent enters stage 2 (when there is no listeners, no user code can execute,
+# but windows will still behave as expected. The "window.close" event default behavior will destroy the windows).
+# 3. main_thread() exists.
+# 4. UILifetime thread waits for changes in the window_map, until the window_map is empty (it won't be at the beginning, due to active windows).
+# 5. 
+
+
 _window_event_names = {id: name for (name, id) in [(x[len('SDL_WINDOWEVENT_'):].lower(), getattr(video, x)) for x in dir(video) if x.startswith('SDL_WINDOWEVENT_')]}
 _re_word_to_under = re.compile('(.)([A-Z][a-z]+)')
 _re_upper_follow = re.compile('([a-z0-9])([A-Z])')

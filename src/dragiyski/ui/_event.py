@@ -1,5 +1,6 @@
-from typing import Callable
-from ._thread import event_listeners, event_listener_lock
+from typing import Callable, Optional
+from abc import ABC, abstractmethod
+from ._thread import add_event_listener
 from ._window import Window
 from sdl2 import *
 import sdl2
@@ -50,7 +51,7 @@ def create_event(sdl_event: SDL_Event):
     type = None
     Class = None
     args = {
-        'timestamp': event.common.timestamp,
+        'timestamp': sdl_event.common.timestamp,
         'type': type
     }
     if sdl_event.type == SDL_DISPLAYEVENT:
@@ -79,8 +80,8 @@ def create_event(sdl_event: SDL_Event):
             args['height'] = event.window.data2
         elif sdl_event.window.event == SDL_WINDOWEVENT_MOVED:
             Class = WindowPositionEvent
-            args['x'] = event.window.data1
-            args['y'] = event.window.data2
+            args['x'] = sdl_event.window.data1
+            args['y'] = sdl_event.window.data2
     if type is not None and Class is not None:
         return Class(**args)
 
@@ -89,75 +90,47 @@ def dispatch_event(name: str, event: Event):
     pass
 
 
-class EventListenerType(type):
-    """
-    Used with event_listener_by_type to ensure a listener to the same type+function produce the same object.
-    As a result, adding an event listener twice with the same type+function would not result in double-call.
-    """
-    def __call__(cls, event_type: str, function: Callable):
-        if event_type not in event_listener_by_type:
-            type_map = event_listener_by_type[event_type] = dict()
-        if function in type_map:
-            if cls is EventListenerOnce or not isinstance(type_map[function], EventListenerOnce):
-                return type_map[function]
-            # Current state is EventListenerOnce while the request is for EventListener
-            # In this case the function is promoted to EventListener class, replacing EventListenerOnce
-        self = super(EventListenerType, cls).__call__(event_type, function)
-        type_map[function] = self
-        return self
+class EventDispatcher(ABC):
+    @abstractmethod
+    def dispatch(event: Event):
+        pass
 
 
-class EventListener(metaclass=EventListenerType):
-    def __init__(self, event_type: str, function: Callable):
-        # We intentionally do not add self to listeners, this will be done by the decorators.
-        # The user can retrieve the listener by calling EventListener("type", func),
-        # and since this is light-weight object, it doubles as dummy EventListener.
-        self.__event_type = event_type
+class EventListener:
+    def __init__(self, function: Callable, dispatcher: EventDispatcher, once: bool = False):
         self.__function = function
-
-    def __call__(self, *args, **kwargs):
-        return self.__function(*args, **kwargs)
-
+        self.__dispatcher = dispatcher
+        self.__once = once
+    
     @property
-    def type() -> str:
-        return self.__event_type
-
-    @property
-    def function() -> Callable:
+    def function(self) -> Callable:
         return self.__function
-
-    def remove():
-        with event_listener_lock:
-            if self.__event_type in event_listener_by_type:
-                type_map = event_listener_by_type[self.__event_type]
-                if self.__function in type_map:
-                    del self.__function[type_map]
-                    if len(type_map) <= 0:
-                        del event_listener_by_type[self.__event_type]
-            event_listeners.remove(self)
+    
+    @property
+    def once(self) -> bool:
+        return self.__once
+    
+    @property
+    def dispatcher(self) -> EventDispatcher:
+        return self.__dispatcher
 
 
-class EventListenerOnce(EventListener):
-    def __call__(self, *args, **kwargs):
-        self.remove()
-        return super().__call__(*args, **kwargs)
+class SimpleLoopEventDispatcher(EventDispatcher):
+    def dispatch(event: Event):
+        pass
 
 
-def event_decorator_factory(event_type: str):
-    def event_decorator_optional_arguments(*args, once=False, **kwargs):
-        def event_decorator(function: Callable):
-            with event_listener_lock:
-                listener = Class(event_type, function)
-                event_listeners.add(listener)
-            return function
-        if len(kwargs) == 0 and len(args) == 1 and callable(args[0]):
-            return event_decorator(args[0])
-        return event_decorator
+default_dispatcher = SimpleLoopEventDispatcher()
 
 
-def on_display_connected(*args, **kwargs):
-    return event_decorator_factory('display_connected')(*args, **kwargs)
-
-
-def on_display_disconnected(*args, **kwargs):
-    return event_decorator_factory('display_disconnected')(*args, **kwargs)
+def ui_event(type: str, *, once: bool = False, dispatcher: Optional[EventDispatcher] = None, window: Optional[Window] = None):
+    def ui_event_decorator(function: Callable):
+        nonlocal type, dispatcher, once, window
+        if dispatcher is None:
+            dispatcher = default_dispatcher
+        listener = EventListener(function=function, dispatcher=dispatcher, once=once)
+        if type not in event_listener_by_type:
+            event_listener_by_type[type] = list()
+        event_listener_by_type[type].append(listener)
+        add_event_listener(listener)
+    return ui_event_decorator
